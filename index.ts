@@ -347,6 +347,7 @@ const SSE = process.env.SSE === "true";
 const STREAMABLE_HTTP = process.env.STREAMABLE_HTTP === "true";
 // When REMOTE_AUTHORIZATION is true, authentication is not required during handshake or tool list
 // Auth headers can be provided per-request and will be stored per-session if present
+// Supports both GitLab Personal Access Tokens (GLPAT) and OAuth access tokens
 const REMOTE_AUTHORIZATION = process.env.REMOTE_AUTHORIZATION === "true";
 const SESSION_TIMEOUT_SECONDS = process.env.SESSION_TIMEOUT_SECONDS ? parseInt(process.env.SESSION_TIMEOUT_SECONDS) : 3600;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -6107,11 +6108,17 @@ async function startStreamableHTTPServer(): Promise<void> {
 
   /**
    * Validate token format and length
+   * Supports both GitLab Personal Access Tokens (GLPAT) and OAuth access tokens
    */
   const validateToken = (token: string): boolean => {
-    // GitLab PAT format: glpat-xxxxx (min 20 chars)
-    if (token.length < 20) return false;
-    if (!/^[a-zA-Z0-9_-]+$/.test(token)) return false;
+    // Basic validation: token should not be empty and have reasonable length
+    if (!token || token.length < 20) return false;
+
+    // GitLab PAT format: glpat-xxxxx or glpat_xxxxx (alphanumeric, underscore, hyphen)
+    // OAuth tokens: typically alphanumeric with possible special chars like dots, underscores, hyphens
+    // Allow a broader set of characters to support OAuth tokens
+    if (!/^[a-zA-Z0-9_.\-]+$/.test(token)) return false;
+
     return true;
   };
 
@@ -6137,18 +6144,21 @@ async function startStreamableHTTPServer(): Promise<void> {
 
   /**
    * Parse authentication from request headers
+   * Supports both GitLab Personal Access Tokens (GLPAT) and OAuth access tokens
    * Returns null if no auth found or invalid format
    */
   const parseAuthHeaders = (req: Request): AuthData | null => {
     const authHeader = (req.headers['authorization'] as string | undefined) || '';
     const privateToken = (req.headers['private-token'] as string | undefined) || '';
 
+    // Private-Token header (for GLPAT tokens)
     if (privateToken) {
       const token = privateToken.trim();
       if (!token || !validateToken(token)) return null;
       return { header: 'Private-Token', token, lastUsed: Date.now() };
     }
-    
+
+    // Authorization header with Bearer token (for GLPAT or OAuth tokens)
     if (authHeader) {
       const match = authHeader.match(/^Bearer\s+(.+)$/i);
       const token = match ? match[1].trim() : '';
