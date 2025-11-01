@@ -1133,6 +1133,11 @@ export const MergeMergeRequestSchema = ProjectParamsSchema.extend({
   squash: z.boolean().optional().default(false).describe("Squash commits into a single commit when merging"),
 });
 
+export const ApproveMergeRequestSchema = GetMergeRequestSchema.extend({
+  sha: z.string().optional().describe("The SHA of the HEAD of the merge request. If provided, must match the current HEAD SHA of the merge request."),
+  approval_password: z.string().optional().describe("Password for user (if required for approval)"),
+});
+
 export const GetMergeRequestDiffsSchema = GetMergeRequestSchema.extend({
   view: z.enum(["inline", "parallel"]).optional().describe("Diff view type"),
 });

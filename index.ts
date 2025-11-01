@@ -171,6 +171,7 @@ import {
   MarkdownUploadSchema,
   DownloadAttachmentSchema,
   MergeMergeRequestSchema,
+  ApproveMergeRequestSchema,
   type MergeRequestThreadPosition,
   type MergeRequestThreadPositionCreate,
   type MyIssuesOptions,
@@ -538,6 +539,11 @@ const allTools = [
     name: "merge_merge_request",
     description: "Merge a merge request in a GitLab project",
     inputSchema: toJSONSchema(MergeMergeRequestSchema),
+  },
+  {
+    name: "approve_merge_request",
+    description: "Approve a merge request in a GitLab project",
+    inputSchema: toJSONSchema(ApproveMergeRequestSchema),
   },
   {
     name: "execute_graphql",
@@ -2506,6 +2512,34 @@ async function mergeMergeRequest(
   const response = await fetch(url.toString(), {
     ...DEFAULT_FETCH_CONFIG,
     method: "PUT",
+    body: JSON.stringify(options),
+  });
+
+  await handleGitLabError(response);
+  return GitLabMergeRequestSchema.parse(await response.json());
+}
+
+/**
+ * Approve a merge request in a GitLab project
+ *
+ * @param {string} projectId - The ID or URL-encoded path of the project
+ * @param {object} options - Approval options (sha, approval_password)
+ * @param {number | string} mergeRequestIid - The internal ID of the merge request
+ * @returns {Promise<GitLabMergeRequest>} The approved merge request
+ */
+async function approveMergeRequest(
+  projectId: string,
+  options: Omit<z.infer<typeof ApproveMergeRequestSchema>, "project_id" | "merge_request_iid">,
+  mergeRequestIid?: number | string
+): Promise<GitLabMergeRequest> {
+  projectId = decodeURIComponent(projectId); // Decode project ID
+  const url = new URL(
+    `${GITLAB_API_URL}/projects/${encodeURIComponent(getEffectiveProjectId(projectId))}/merge_requests/${mergeRequestIid}/approve`
+  );
+
+  const response = await fetch(url.toString(), {
+    ...DEFAULT_FETCH_CONFIG,
+    method: "POST",
     body: JSON.stringify(options),
   });
 
@@ -5057,6 +5091,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         const args = MergeMergeRequestSchema.parse(request.params.arguments);
         const { project_id, merge_request_iid, ...options } = args;
         const mergeRequest = await mergeMergeRequest(project_id, options, merge_request_iid);
+        return {
+          content: [{ type: "text", text: JSON.stringify(mergeRequest, null, 2) }],
+        };
+      }
+
+      case "approve_merge_request": {
+        const args = ApproveMergeRequestSchema.parse(request.params.arguments);
+        const { project_id, merge_request_iid, ...options } = args;
+        const mergeRequest = await approveMergeRequest(project_id, options, merge_request_iid);
         return {
           content: [{ type: "text", text: JSON.stringify(mergeRequest, null, 2) }],
         };
