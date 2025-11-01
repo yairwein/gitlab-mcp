@@ -345,6 +345,8 @@ const USE_MILESTONE = process.env.USE_MILESTONE === "true";
 const USE_PIPELINE = process.env.USE_PIPELINE === "true";
 const SSE = process.env.SSE === "true";
 const STREAMABLE_HTTP = process.env.STREAMABLE_HTTP === "true";
+// When REMOTE_AUTHORIZATION is true, authentication is not required during handshake or tool list
+// Auth headers can be provided per-request and will be stored per-session if present
 const REMOTE_AUTHORIZATION = process.env.REMOTE_AUTHORIZATION === "true";
 const SESSION_TIMEOUT_SECONDS = process.env.SESSION_TIMEOUT_SECONDS ? parseInt(process.env.SESSION_TIMEOUT_SECONDS) : 3600;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -6231,19 +6233,15 @@ async function startStreamableHTTPServer(): Promise<void> {
       const authData = parseAuthHeaders(req);
 
       if (sessionId && !authBySession[sessionId]) {
-        // New session: require auth headers
-        if (!authData) {
-          metrics.authFailures++;
-          res.status(401).json({ 
-            error: 'Missing Authorization or Private-Token header',
-            message: 'Remote authorization is enabled. Please provide Authorization or Private-Token header.'
-          });
-          return;
+        // New session: store auth headers if provided, but don't require them
+        if (authData) {
+          // Store auth for this session
+          authBySession[sessionId] = authData;
+          logger.info(`Session ${sessionId}: stored ${authData.header} header`);
+          setAuthTimeout(sessionId);
+        } else {
+          logger.info(`Session ${sessionId}: no auth headers provided, continuing without authentication`);
         }
-        // Store auth for this session
-        authBySession[sessionId] = authData;
-        logger.info(`Session ${sessionId}: stored ${authData.header} header`);
-        setAuthTimeout(sessionId);
       } else if (sessionId && authData) {
         // Existing session: allow auth rotation/update
         authBySession[sessionId] = authData;
@@ -6254,7 +6252,8 @@ async function startStreamableHTTPServer(): Promise<void> {
         authBySession[sessionId].lastUsed = Date.now();
         setAuthTimeout(sessionId);
       } else if (!sessionId && !authData) {
-        // First request without session - will fail in initialization
+        // First request without session - will proceed without authentication
+        logger.debug('First request without session and no auth headers');
       }
     }
 
