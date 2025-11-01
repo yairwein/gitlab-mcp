@@ -2272,3 +2272,12 @@ export type UpdateReleaseOptions = z.infer<typeof UpdateReleaseSchema>;
 export type DeleteReleaseOptions = z.infer<typeof DeleteReleaseSchema>;
 export type CreateReleaseEvidenceOptions = z.infer<typeof CreateReleaseEvidenceSchema>;
 export type DownloadReleaseAssetOptions = z.infer<typeof DownloadReleaseAssetSchema>;
+
+// Git CLI tool schema
+export const GitCliSchema = z.object({
+  command: z.string().describe("The git command to execute (e.g., 'clone', 'fetch', 'pull', 'push')"),
+  args: z.array(z.string()).describe("Arguments for the git command. For commands requiring URLs, use https URLs without credentials"),
+  working_directory: z.string().optional().describe("Working directory for the git command (optional, defaults to current directory)"),
+});
+
+export type GitCliOptions = z.infer<typeof GitCliSchema>;

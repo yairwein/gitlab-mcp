@@ -22,6 +22,8 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { Agent } from "http";
 import { Agent as HttpsAgent } from "https";
 import { URL } from "url";
+import { spawn } from "child_process";
+import { promisify } from "util";
 import {
   BulkPublishDraftNotesSchema,
   CancelPipelineJobSchema,
@@ -208,6 +210,7 @@ import {
   DeleteReleaseSchema,
   CreateReleaseEvidenceSchema,
   DownloadReleaseAssetSchema,
+  GitCliSchema,
 } from "./schemas.js";
 
 import { randomUUID } from "crypto";
@@ -1025,6 +1028,11 @@ const allTools = [
     name: "download_release_asset",
     description: "Download a release asset file by direct asset path",
     inputSchema: toJSONSchema(DownloadReleaseAssetSchema),
+  },
+  {
+    name: "git_cli",
+    description: "Execute git commands with automatic HTTPS authentication. For commands requiring URLs, provide https URLs without credentials - the OAuth token will be automatically injected",
+    inputSchema: toJSONSchema(GitCliSchema),
   },
 ];
 
@@ -6021,6 +6029,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         return {
           content: [{ type: "text", text: assetContent }],
         };
+      }
+
+      case "git_cli": {
+        const args = GitCliSchema.parse(request.params.arguments);
+
+        // Get the OAuth token
+        let token: string | undefined;
+        if (REMOTE_AUTHORIZATION) {
+          const ctx = sessionAuthStore.getStore();
+          token = ctx?.token;
+        } else {
+          token = GITLAB_PERSONAL_ACCESS_TOKEN;
+        }
+
+        if (!token) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: "No authentication token available" }, null, 2) }],
+          };
+        }
+
+        // Parse the GitLab URL to extract the host
+        const gitlabUrl = new URL(GITLAB_API_URL);
+        const gitlabHost = gitlabUrl.hostname;
+
+        // Process arguments to inject token into URLs
+        const processedArgs = args.args.map(arg => {
+          // Check if argument looks like an HTTPS URL
+          if (arg.startsWith('https://')) {
+            try {
+              const url = new URL(arg);
+              // Check if it's a GitLab URL (match the configured host)
+              if (url.hostname === gitlabHost) {
+                // Inject the token in the format: https://oauth2:TOKEN@host/path
+                url.username = 'oauth2';
+                url.password = token;
+                return url.toString();
+              }
+            } catch (e) {
+              // If URL parsing fails, return original arg
+              logger.warn(`Failed to parse URL: ${arg}`, e);
+            }
+          }
+          return arg;
+        });
+
+        // Execute the git command
+        return new Promise((resolve) => {
+          const gitProcess = spawn('git', [args.command, ...processedArgs], {
+            cwd: args.working_directory || process.cwd(),
+            env: process.env,
+          });
+
+          let stdout = '';
+          let stderr = '';
+
+          gitProcess.stdout.on('data', (data) => {
+            stdout += data.toString();
+          });
+
+          gitProcess.stderr.on('data', (data) => {
+            stderr += data.toString();
+          });
+
+          gitProcess.on('close', (code) => {
+            const output = {
+              command: `git ${args.command} ${args.args.join(' ')}`,
+              exit_code: code,
+              stdout: stdout.trim(),
+              stderr: stderr.trim(),
+            };
+
+            resolve({
+              content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
+            });
+          });
+
+          gitProcess.on('error', (error) => {
+            resolve({
+              content: [{ type: "text", text: JSON.stringify({ error: `Failed to execute git command: ${error.message}` }, null, 2) }],
+            });
+          });
+        });
       }
 
       default:
